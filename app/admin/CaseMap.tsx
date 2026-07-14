@@ -59,8 +59,13 @@ export default function CaseMap({ cases }: { cases: CaseItem[] }) {
           const title = document.createElement("b");
           title.textContent = `${item.id} · ${item.name}`;
           const detail = document.createElement("small");
-          detail.textContent = `${statusLabels[item.status]} · ${item.address}`;
+          detail.textContent = `${statusLabels[item.status]} · Standort: ${item.location}`;
           row.append(title, detail);
+          if (item.address && item.address !== item.location) {
+            const address = document.createElement("small");
+            address.textContent = `Adresse: ${item.address}`;
+            row.append(address);
+          }
           popup.append(row);
         }
         const markerTitle = items.map((item) => item.id).join(", ");
