@@ -1,66 +1,19 @@
 "use client";
-
-import { useMemo, useState } from "react";
-import { casesSeed, statusLabels, type CaseItem } from "../demo-data";
-
-type View = "dashboard" | "bookings";
-
-export default function AdminPage() {
-  const [cases, setCases] = useState(casesSeed);
-  const [selected, setSelected] = useState<CaseItem | null>(cases[1]);
-  const [view, setView] = useState<View>("dashboard");
-  const [notice, setNotice] = useState("");
-  const totals = useMemo(() => ({
-    free: 8 + cases.filter((item) => item.status === "frei").length,
-    out: 14 + cases.filter((item) => item.status === "unterwegs" || item.status === "abweichung").length,
-    booked: 3 + cases.filter((item) => item.status === "reserviert").length,
-    open: cases.filter((item) => item.status === "offen").length,
-  }), [cases]);
-
-  function reserve(id: string) {
-    setCases((all) => all.map((item) => item.id === id ? { ...item, status: "reserviert", next: "20.–24. Juli" } : item));
-    setNotice(`${id} wurde für 20.–24. Juli reserviert.`);
-  }
-
-  return <main className="admin-layout">
-    <aside className="sidebar">
-      <div className="logo"><span>◇</span><div><b>KÖNA</b><small>Kofferverwaltung</small></div></div>
-      <nav>
-        <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>▦ <span>Übersicht</span></button>
-        <button className={view === "bookings" ? "active" : ""} onClick={() => setView("bookings")}>▣ <span>Buchungen</span></button>
-        <a href="/scan">▧ <span>Übergabe öffnen</span></a>
-      </nav>
-      <div className="admin-user"><b>JL</b><div>Jakub Leitner<small>Administrator</small></div></div>
-    </aside>
-
-    <section className="admin-main">
-      <header className="admin-header"><div><p className="eyebrow">Dienstag, 14. Juli 2026</p><h1>{view === "dashboard" ? "Koffer im Überblick" : "Buchungen"}</h1><p>{view === "dashboard" ? "Standorte, Übergaben und Abweichungen auf einen Blick." : "Verfügbarkeit prüfen und Koffer für einen Zeitraum reservieren."}</p></div><button className="btn primary" onClick={() => setView("bookings")}>＋ Koffer buchen</button></header>
-      {notice && <div className="notice">✓ {notice}<button onClick={() => setNotice("")}>×</button></div>}
-
-      {view === "dashboard" ? <>
-        <section className="stats">
-          <Stat value={totals.free} label="verfügbar" tone="green"/>
-          <Stat value={totals.out} label="unterwegs" tone="blue"/>
-          <Stat value={totals.booked} label="reserviert" tone="purple"/>
-          <Stat value={totals.open} label="offene Übergaben" tone="orange"/>
-        </section>
-        <div className="dashboard-grid">
-          <section className="card"><div className="card-head"><div><h2>Aktuelle Standorte</h2><p>Zuletzt bestätigter Standort je Koffer</p></div><button>Alle anzeigen →</button></div><div className="map"><i/><i/><i/><span className="city c1">FREISTADT</span><span className="city c2">LINZ</span><span className="city c3">WIEN</span><button className="pin p1">01</button><button className="pin p2">02</button><button className="pin p3 warn">05</button></div></section>
-          <section className="card"><div className="card-head"><div><h2>Heute beachten</h2><p>3 Vorgänge benötigen Aufmerksamkeit</p></div></div>
-            <Task color="orange" icon="!" title="K-003 wartet auf Übernahme" text="Abschluss durch Peter Gruber · Wels" onClick={() => setSelected(cases[2])}/>
-            <Task color="red" icon="!" title="K-005: Fehlbestand gemeldet" text="1 Drucker und 1 Kabelset fehlen" onClick={() => setSelected(cases[4])}/>
-            <Task color="blue" icon="↗" title="K-002 Rückgabe am 17. Juli" text="Max Huber · Linz" onClick={() => setSelected(cases[1])}/>
-          </section>
-        </div>
-        <section className="card case-table"><div className="card-head"><div><h2>Alle Koffer</h2><p>30 Koffer im Bestand</p></div><button>Filter ▾</button></div><div className="table-wrap"><table><thead><tr><th>Koffer</th><th>Status</th><th>Aktueller Besitzer</th><th>Standort</th><th>Nächster Termin</th></tr></thead><tbody>{cases.map((item) => <tr key={item.id} onClick={() => setSelected(item)}><td><b>{item.id}</b><small>{item.name}</small></td><td><StatusTag status={item.status}/></td><td>{item.holder}</td><td>{item.address}</td><td>{item.next ?? "–"}</td></tr>)}</tbody></table></div></section>
-      </> : <Bookings cases={cases} onReserve={reserve}/>} 
-    </section>
-
-    {selected && <div className="overlay" onClick={() => setSelected(null)}><aside className="drawer" onClick={(event) => event.stopPropagation()}><button className="close" onClick={() => setSelected(null)}>×</button><p className="eyebrow">{selected.id}</p><h2>{selected.name}</h2><StatusTag status={selected.status}/><div className="detail"><label>Aktueller Besitzer<strong>{selected.holder}</strong></label><label>Standort<strong>{selected.address}</strong></label><label>Letzte Aktualisierung<strong>{selected.updated}</strong></label></div><h3>Kofferinhalt</h3><div className="inventory">{selected.inventory.map((item) => <div key={item.name}><span>{item.name}</span><b className={item.actual !== item.expected ? "bad" : ""}>{item.actual} / {item.expected}</b></div>)}</div><h3>Verlauf</h3><div className="timeline">{selected.history.map((entry) => <div key={entry.date + entry.title}><b>{entry.title}</b><small>{entry.date} · {entry.detail}</small></div>)}</div><a className="btn primary wide link-button" href={`/scan?id=${selected.id}`}>Übergabe für diesen Koffer öffnen</a></aside></div>}
-  </main>;
+import { useMemo,useState } from "react";
+import { casesSeed,statusLabels,type CaseItem } from "../demo-data";
+export default function AdminPage(){
+ const [selected,setSelected]=useState<CaseItem|null>(null); const [query,setQuery]=useState("");
+ const rows=useMemo(()=>casesSeed.filter(c=>`${c.id} ${c.holder} ${c.location}`.toLowerCase().includes(query.toLowerCase())),[query]);
+ return <main className="admin-app"><aside className="admin-sidebar"><div className="admin-logo"><span>▣</span><div><b>KÖNA</b><small>Koffer Übergabe</small></div></div><nav>{["Dashboard","Koffer","Übergaben","Karte","Inhaltsübersicht","Hinweise","Berichte","Einstellungen"].map((x,i)=><button className={i===0?"active":""} key={x}><span>{["⌂","▣","⇄","⌖","▤","!","▥","⚙"][i]}</span>{x}</button>)}</nav><div className="refresh"><small>Letzte Aktualisierung</small><b>vor 2 Minuten</b></div><div className="admin-user"><b>JL</b><div>Jakub Leitner<small>Administrator</small></div><span>⌄</span></div></aside>
+ <section className="admin-content"><header className="dashboard-header"><div><h1>Dashboard</h1><p>Übersicht aller Koffer und Übergaben</p></div><div className="header-tools"><button>▣ 01.07.2025 – 13.07.2025⌄</button><button className="bell">♢<i>3</i></button></div></header>
+ <section className="metric-grid"><Metric icon="▣" label="Gesamt Koffer" value="30" text="Alle Koffer im System" tone="teal"/><Metric icon="✓" label="Aktuell vergeben" value="22" text="In Nutzung" tone="green"/><Metric icon="◷" label="Wartet auf Übernahme" value="4" text="Bereit zur Abholung" tone="orange"/><Metric icon="▣" label="Verfügbar" value="4" text="Frei und bereit" tone="gray"/><Metric icon="!" label="Hinweise" value="3" text="Abweichungen / Fehler" tone="red"/></section>
+ <section className="dashboard-panels"><div className="panel map-panel"><PanelTitle title="Koffer auf der Karte"/><div className="real-map"><span className="road r1"/><span className="road r2"/><span className="road r3"/><label className="place p-f">Freistadt</label><label className="place p-r">Rainbach</label><label className="place p-s">Sandl</label><label className="place p-g">Grünbach</label><button className="cluster green m1">5</button><button className="cluster orange m2">2</button><button className="cluster red m3">1</button><button className="map-control">＋<br/>−<br/>◎</button><button className="map-open">Karte öffnen ↗</button></div></div>
+ <div className="panel"><PanelTitle title="Letzte Übergaben" action="Alle anzeigen"/>{[["KFR-012","Jakub Leitner → Max Mustermann","13.07.2025","14:32","green"],["KFR-007","Lisa Wagner → Thomas Berger","13.07.2025","11:08","green"],["KFR-021","Wartet auf Übernahme","13.07.2025","09:15","orange"],["KFR-003","Maria Huber → Peter Neumann","12.07.2025","18:42","green"],["KFR-018","Stefan Bauer → Lisa Wagner","12.07.2025","16:21","green"]].map(x=><div className="activity" key={x[0]}><i className={x[4]}/><span><b>{x[0]}</b><small>{x[1]}</small></span><time>{x[2]}<small>{x[3]}</small></time></div>)}<button className="panel-footer">Alle Übergaben anzeigen ›</button></div>
+ <div className="panel"><PanelTitle title="Hinweise" action="Alle anzeigen"/>{[["KFR-007","2 Gegenstände fehlen","13.07.2025","red"],["KFR-015","1 Gegenstand beschädigt","12.07.2025","orange"],["KFR-003","Abweichung bei 1 Gegenstand","12.07.2025","orange"]].map(x=><button className="notice-row" key={x[0]}><i className={x[3]}/><span><b>{x[0]}</b><small>{x[1]}</small></span><time>{x[2]}</time></button>)}<button className="panel-footer">Alle Hinweise anzeigen ›</button></div></section>
+ <section className="panel all-cases"><div className="table-header"><h2>Alle Koffer</h2><div><label>⌕<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Koffer suchen..."/></label><button>⚗ Filter</button><button>⇩ Export</button></div></div><div className="table-scroll"><table><thead><tr><th>Koffer ID</th><th>Status</th><th>Aktueller Besitzer</th><th>Standort</th><th>Letzte Übergabe</th><th>Hinweise</th><th/></tr></thead><tbody>{rows.map(c=><tr key={c.id} onClick={()=>setSelected(c)}><td><b>{c.id}</b></td><td><span className={`status-pill ${c.status}`}>{statusLabels[c.status]}</span></td><td>{c.holder}</td><td>⌖ {c.location}</td><td>{c.updated}</td><td>{c.inventory.some(x=>x.actual!==x.expected)?<span className="issue-count">● 1</span>:"–"}</td><td>›</td></tr>)}</tbody></table></div></section>
+ </section>
+ {selected&&<div className="drawer-overlay" onClick={()=>setSelected(null)}><aside className="case-drawer" onClick={e=>e.stopPropagation()}><button className="drawer-close" onClick={()=>setSelected(null)}>×</button><p>{selected.id}</p><h2>{selected.name}</h2><span className={`status-pill ${selected.status}`}>{statusLabels[selected.status]}</span><div className="drawer-info"><small>Aktueller Besitzer</small><b>{selected.holder}</b><small>Standort</small><b>{selected.address}</b><small>Letzte Übergabe</small><b>{selected.updated}</b></div><h3>Kofferinhalt</h3>{selected.inventory.map(x=><div className="drawer-item" key={x.name}><span>{x.icon} {x.name}</span><b className={x.actual!==x.expected?"danger":""}>{x.actual} / {x.expected}</b></div>)}<h3>Verlauf</h3>{selected.history.map(h=><div className="history-item" key={h.date}><b>{h.title}</b><small>{h.date} · {h.detail}</small></div>)}<a className="open-case" href={`/koffer/${selected.id}`}>Öffentliche Kofferseite öffnen ↗</a></aside></div>}
+ </main>;
 }
-
-function Stat({ value, label, tone }: { value: number; label: string; tone: string }) { return <div className={`stat ${tone}`}><strong>{value}</strong><span>{label}</span></div>; }
-function StatusTag({ status }: { status: CaseItem["status"] }) { return <span className={`status ${status}`}>{statusLabels[status]}</span>; }
-function Task({ color, icon, title, text, onClick }: { color: string; icon: string; title: string; text: string; onClick: () => void }) { return <button className="task" onClick={onClick}><b className={color}>{icon}</b><span><strong>{title}</strong><small>{text}</small></span><i>›</i></button>; }
-function Bookings({ cases, onReserve }: { cases: CaseItem[]; onReserve: (id: string) => void }) { const available = cases.filter((item) => item.status === "frei"); return <><section className="booking-hero"><p className="eyebrow">Verfügbarkeit prüfen</p><h2>Koffer für einen Zeitraum buchen</h2><div className="booking-fields"><label>Von<input type="date" defaultValue="2026-07-20"/></label><label>Bis<input type="date" defaultValue="2026-07-24"/></label><label>Einsatzort<input placeholder="z. B. Linz"/></label><button className="btn primary">Prüfen</button></div></section><section className="card"><div className="card-head"><div><h2>Verfügbare Koffer</h2><p>20.–24. Juli 2026</p></div><span className="availability-count">{available.length + 7} verfügbar</span></div>{available.map((item) => <div className="booking-row" key={item.id}><div><b>{item.id}</b><small>{item.name} · {item.address}</small></div><StatusTag status={item.status}/><button className="btn primary small" onClick={() => onReserve(item.id)}>Buchen</button></div>)}</section></>; }
+function Metric({icon,label,value,text,tone}:{icon:string;label:string;value:string;text:string;tone:string}){return <div className="metric"><span className={tone}>{icon}</span><div><small>{label}</small><b>{value}</b><p>{text}</p></div></div>}
+function PanelTitle({title,action}:{title:string;action?:string}){return <div className="panel-title"><h2>{title}</h2>{action&&<button>{action}</button>}</div>}

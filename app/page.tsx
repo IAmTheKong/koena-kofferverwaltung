@@ -1,5 +1,2 @@
 import { redirect } from "next/navigation";
-
-export default function Home() {
-  redirect("/scan");
-}
+export default function Home(){redirect("/admin");}
