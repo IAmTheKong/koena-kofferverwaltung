@@ -30,6 +30,8 @@ export type CaseItem = {
   holder: string;
   address: string;
   location: string;
+  latitude?: number;
+  longitude?: number;
   returnDue?: string;
   updated: string;
   inventory: InventoryItem[];

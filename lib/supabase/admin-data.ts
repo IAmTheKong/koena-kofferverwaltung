@@ -11,6 +11,8 @@ type SuitcaseRow = {
   current_holder_name: string | null;
   current_holder_address: string | null;
   current_location_name: string;
+  current_latitude: number | null;
+  current_longitude: number | null;
   return_due_on: string | null;
   updated_at: string;
   case_items: Array<{
@@ -61,6 +63,8 @@ function mapSuitcase(row: SuitcaseRow): CaseItem {
     holder: row.current_holder_name ?? "–",
     address: row.current_holder_address ?? row.current_location_name,
     location: row.current_location_name,
+    latitude: row.current_latitude ?? undefined,
+    longitude: row.current_longitude ?? undefined,
     returnDue: row.return_due_on ?? undefined,
     updated: formatDate(row.updated_at),
     inventory: [...(row.case_items ?? [])]
@@ -87,7 +91,7 @@ export async function loadAdminData() {
       .from("suitcases")
       .select(`
         id, case_number, qr_public_id, name, description, status,
-        current_holder_name, current_holder_address, current_location_name,
+        current_holder_name, current_holder_address, current_location_name, current_latitude, current_longitude,
         return_due_on, updated_at,
         case_items (id, name, expected_quantity, current_quantity, note, sort_order),
         case_events (event_type, location_name, holder_name, note, occurred_at)
@@ -122,14 +126,13 @@ export async function createCase(input: {
   id: string;
   name: string;
   description: string;
-  location: string;
   inventory: InventoryItem[];
 }) {
   const { data, error } = await getSupabaseClient().rpc("create_suitcase_with_items", {
     p_case_number: input.id,
     p_name: input.name,
     p_description: input.description || null,
-    p_location: input.location,
+    p_location: "Summerau",
     p_items: input.inventory.map((item) => ({
       name: item.name,
       expected_quantity: item.expected,
@@ -139,6 +142,27 @@ export async function createCase(input: {
 
   if (error) throw error;
   return data as string;
+}
+
+export async function updateCase(input: {
+  databaseId: string;
+  name: string;
+  description: string;
+  status: CaseStatus;
+  inventory: InventoryItem[];
+}) {
+  const { error } = await getSupabaseClient().rpc("update_suitcase_with_items", {
+    p_suitcase_id: input.databaseId,
+    p_name: input.name,
+    p_description: input.description || null,
+    p_status: input.status,
+    p_items: input.inventory.map((item) => ({
+      id: item.id ?? null,
+      name: item.name,
+      expected_quantity: item.expected,
+    })),
+  });
+  if (error) throw error;
 }
 
 export async function createBooking(input: {
@@ -159,10 +183,9 @@ export async function createBooking(input: {
   if (error) throw error;
 }
 
-export async function archiveCase(databaseId: string) {
-  const { error } = await getSupabaseClient()
-    .from("suitcases")
-    .update({ archived_at: new Date().toISOString(), status: "out_of_service" })
-    .eq("id", databaseId);
+export async function deleteCase(databaseId: string) {
+  const { error } = await getSupabaseClient().rpc("delete_suitcase_admin", {
+    p_suitcase_id: databaseId,
+  });
   if (error) throw error;
 }

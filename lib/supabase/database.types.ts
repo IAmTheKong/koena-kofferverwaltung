@@ -15,7 +15,8 @@ export type Database = {
       suitcases: Table<{
         id: string; case_number: string; qr_public_id: string; name: string; description: string | null;
         status: CaseStatus; current_holder_name: string | null; current_holder_address: string | null;
-        current_location_name: string; return_due_on: string | null; updated_at: string; archived_at: string | null;
+        current_location_name: string; current_latitude: number | null; current_longitude: number | null;
+        return_due_on: string | null; updated_at: string; archived_at: string | null;
       }>;
       case_items: Table<{
         id: string; suitcase_id: string; name: string; expected_quantity: number; current_quantity: number;
@@ -50,6 +51,15 @@ export type Database = {
           p_counts: Json; p_note?: string | null;
         };
         Returns: string;
+      };
+      update_suitcase_with_items: {
+        Args: { p_suitcase_id: string; p_name: string; p_description: string | null; p_status: CaseStatus; p_items: Json };
+        Returns: string;
+      };
+      delete_suitcase_admin: { Args: { p_suitcase_id: string }; Returns: undefined };
+      set_public_suitcase_coordinates: {
+        Args: { p_public_id: string; p_latitude: number; p_longitude: number };
+        Returns: undefined;
       };
     };
     Enums: { case_status: CaseStatus };

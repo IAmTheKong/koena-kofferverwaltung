@@ -5,10 +5,11 @@ import { QRCodeSVG } from "qrcode.react";
 import type { User } from "@supabase/supabase-js";
 import type { Booking, CaseItem, InventoryItem } from "../../lib/domain";
 import { statusHelp, statusLabels } from "../../lib/domain";
-import { archiveCase, createBooking, createCase, loadAdminData } from "../../lib/supabase/admin-data";
+import { createBooking, createCase, deleteCase, loadAdminData, updateCase } from "../../lib/supabase/admin-data";
 import { getSupabaseClient } from "../../lib/supabase/client";
+import CaseMap from "./CaseMap";
 
-type AdminView = "dashboard" | "cases" | "bookings" | "handovers" | "map" | "inventory" | "notices" | "reports" | "settings";
+type AdminView = "dashboard" | "cases" | "bookings" | "handovers" | "map" | "inventory" | "notices";
 type Flash = { tone: "success" | "error" | "info"; text: string } | null;
 
 const navItems: { key: AdminView; label: string; icon: string }[] = [
@@ -19,8 +20,6 @@ const navItems: { key: AdminView; label: string; icon: string }[] = [
   { key: "map", label: "Standorte", icon: "⌖" },
   { key: "inventory", label: "Inhaltsübersicht", icon: "▤" },
   { key: "notices", label: "Hinweise", icon: "!" },
-  { key: "reports", label: "Berichte", icon: "▥" },
-  { key: "settings", label: "Einstellungen", icon: "⚙" },
 ];
 
 const starterInventory: InventoryItem[] = [
@@ -29,7 +28,8 @@ const starterInventory: InventoryItem[] = [
   { name: "Handys", expected: 4, actual: 4 },
   { name: "Tablets", expected: 2, actual: 2 },
   { name: "Router", expected: 1, actual: 1 },
-  { name: "Kabel & Zubehör", expected: 15, actual: 15 },
+  { name: "CAT-Kabel", expected: 8, actual: 8 },
+  { name: "Stromkabel", expected: 7, actual: 7 },
 ];
 
 function readableError(error: unknown) {
@@ -47,6 +47,7 @@ export default function AdminPage() {
   const [cases, setCases] = useState<CaseItem[]>([]);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [selected, setSelected] = useState<CaseItem | null>(null);
+  const [editing, setEditing] = useState<CaseItem | null>(null);
   const [query, setQuery] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -89,7 +90,7 @@ export default function AdminPage() {
   if (!user) return <LoginScreen onMessage={setFlash} flash={flash} />;
   if (user.app_metadata.role !== "admin") return <AccessDenied email={user.email ?? "dieses Konto"} />;
 
-  async function handleCreate(input: { id: string; name: string; description: string; location: string; inventory: InventoryItem[] }) {
+  async function handleCreate(input: { id: string; name: string; description: string; inventory: InventoryItem[] }) {
     try {
       await createCase(input);
       await refresh();
@@ -101,13 +102,26 @@ export default function AdminPage() {
     }
   }
 
-  async function handleArchive(item: CaseItem) {
-    if (!window.confirm(`${item.id} archivieren? Der Koffer bleibt in der Datenbank und verschwindet aus der aktiven Liste.`)) return;
+  async function handleUpdate(input: { databaseId: string; name: string; description: string; status: CaseItem["status"]; inventory: InventoryItem[] }) {
     try {
-      await archiveCase(item.databaseId);
+      await updateCase(input);
+      setEditing(null);
       setSelected(null);
       await refresh();
-      setFlash({ tone: "success", text: `${item.id} wurde archiviert.` });
+      setFlash({ tone: "success", text: "Koffer und individuelle Befüllung wurden aktualisiert." });
+    } catch (error) {
+      throw new Error(readableError(error));
+    }
+  }
+
+  async function handleDelete(item: CaseItem) {
+    if (!window.confirm(`${item.id} dauerhaft löschen? Zugehörige Buchungen, Übergaben und die Historie werden ebenfalls entfernt. Diese Aktion kann nicht rückgängig gemacht werden.`)) return;
+    try {
+      await deleteCase(item.databaseId);
+      setEditing(null);
+      setSelected(null);
+      await refresh();
+      setFlash({ tone: "success", text: `${item.id} wurde dauerhaft gelöscht.` });
     } catch (error) {
       setFlash({ tone: "error", text: readableError(error) });
     }
@@ -137,12 +151,11 @@ export default function AdminPage() {
       {view === "map" && <LocationsView cases={cases} onSelect={setSelected} />}
       {view === "inventory" && <InventoryOverview cases={cases} />}
       {view === "notices" && <Notices cases={issues} onSelect={setSelected} />}
-      {view === "reports" && <EmptyState title="Berichte" text="Export und Auswertungen werden im nächsten Ausbauschritt ergänzt. Die angezeigten Verwaltungsdaten sind bereits live." />}
-      {view === "settings" && <SettingsView />}
     </section>
 
-    {selected && <CaseDrawer selected={selected} bookings={bookings.filter((booking) => booking.suitcaseId === selected.databaseId)} onClose={() => setSelected(null)} onArchive={() => void handleArchive(selected)} />}
+    {selected && <CaseDrawer selected={selected} bookings={bookings.filter((booking) => booking.suitcaseId === selected.databaseId)} onClose={() => setSelected(null)} onEdit={() => { setEditing(selected); setSelected(null); }} onDelete={() => void handleDelete(selected)} />}
     {showCreate && <CreateCaseModal cases={cases} onClose={() => setShowCreate(false)} onCreate={handleCreate} />}
+    {editing && <EditCaseModal item={editing} onClose={() => setEditing(null)} onUpdate={handleUpdate} onDelete={() => void handleDelete(editing)} />}
   </main>;
 }
 
@@ -155,8 +168,6 @@ function subtitleFor(view: AdminView) {
     map: "Konkrete Koffer nach ihrem zuletzt bestätigten Standort",
     inventory: "Soll- und Ist-Bestand über alle Koffer durchsuchen",
     notices: "Fehlbestände und Schäden dauerhaft bearbeiten",
-    reports: "Auswertungen und Exporte",
-    settings: "Stammdaten und Systemkonfiguration",
   };
   return subtitles[view];
 }
@@ -186,6 +197,7 @@ function Dashboard({ cases, bookings, issues, setView, setSelected }: { cases: C
   const upcoming = bookings.filter((booking) => booking.status === "confirmed" && booking.startsOn >= today).slice(0, 4);
   return <>
     <section className="metric-grid"><Metric icon="▣" label="Gesamt" value={cases.length} text="aktive Koffer" tone="teal"/><Metric icon="✓" label="Heute verfügbar" value={cases.filter((item) => item.status === "available").length} text="sofort einsetzbar" tone="green"/><Metric icon="▦" label="Reserviert" value={cases.filter((item) => item.status === "reserved").length} text="kommende Buchung" tone="gray"/><Metric icon="◷" label="Offene Übernahmen" value={waiting.length} text="zweite Zählung fehlt" tone="orange"/><Metric icon="!" label="Hinweise" value={issues.length} text="Bestand prüfen" tone="red"/></section>
+    <section className="panel dashboard-map"><PanelTitle title="Aktuelle Kofferstandorte" action="Standorte öffnen ›" onAction={() => setView("map")}/><CaseMap cases={cases}/><p className="map-caption">Die Marker zeigen die zuletzt bestätigten Koordinaten; die Adresse wird direkt am Marker angezeigt. Kartendaten © OpenStreetMap.</p></section>
     <section className="dashboard-panels logical"><div className="panel"><PanelTitle title="Jetzt bearbeiten" action="Alle Hinweise" onAction={() => setView("notices")}/>{[...waiting, ...issues].slice(0, 6).map((item) => <button className="notice-row" key={item.id} onClick={() => setSelected(item)}><i className={item.status === "awaiting_takeover" ? "orange" : "red"}/><span><b>{item.id} · {statusLabels[item.status]}</b><small>{item.status === "awaiting_takeover" ? `Seit ${item.updated} offen · ${item.location}` : "Soll- und Ist-Bestand weichen ab"}</small></span><time>Öffnen ›</time></button>)}{!waiting.length && !issues.length && <InlineEmpty text="Keine offenen Aufgaben." />}</div>
     <div className="panel"><PanelTitle title="Kommende Buchungen" action="Planung öffnen" onAction={() => setView("bookings")}/>{upcoming.map((booking) => <div className="activity" key={booking.id}><i className="green"/><span><b>{booking.caseNumber} · {booking.customerName}</b><small>{booking.startsOn} bis {booking.endsOn} · {booking.location}</small></span></div>)}{!upcoming.length && <InlineEmpty text="Keine kommenden Buchungen." />}</div></section>
     <section className="panel all-cases"><div className="table-header"><div><h2>Aktive Koffer</h2><p>{cases.length} Datensätze aus Supabase</p></div><button className="text-action" onClick={() => setView("cases")}>Alle verwalten ›</button></div><CaseTable rows={cases.slice(0, 8)} onSelect={setSelected}/></section>
@@ -197,7 +209,7 @@ function CasesView({ rows, query, setQuery, onSelect, onCreate }: { rows: CaseIt
 }
 
 function CaseTable({ rows, onSelect }: { rows: CaseItem[]; onSelect: (item: CaseItem) => void }) {
-  return <div className="table-scroll"><table><thead><tr><th>Koffer-ID</th><th>Bezeichnung</th><th>Status</th><th>Aktuell bei</th><th>Standort</th><th>Aktualisiert</th><th>Inhalt</th><th>Aktion</th></tr></thead><tbody>{rows.map((item) => { const deviations = item.inventory.filter((entry) => entry.actual !== entry.expected).length; return <tr key={item.databaseId} onClick={() => onSelect(item)}><td><b>{item.id}</b></td><td>{item.name}</td><td><span className={`status-pill ${item.status}`}>{statusLabels[item.status]}</span></td><td>{item.holder}</td><td>⌖ {item.location}</td><td>{item.updated}</td><td>{deviations ? <span className="issue-count">● {deviations} Abweichung{deviations === 1 ? "" : "en"}</span> : "Soll = Ist"}</td><td><button className="row-action" aria-label={`${item.id} öffnen`}>Details ›</button></td></tr>; })}</tbody></table></div>;
+  return <div className="table-scroll"><table><thead><tr><th>Koffer-ID</th><th>Bezeichnung</th><th>Status</th><th>Aktuell bei</th><th>Standort</th><th>Aktualisiert</th><th>Inhalt</th><th>Aktion</th></tr></thead><tbody>{rows.map((item) => { const deviations = item.inventory.filter((entry) => entry.actual !== entry.expected).length; return <tr key={item.databaseId} onClick={() => onSelect(item)}><td><b>{item.id}</b></td><td>{item.name}</td><td><span className={`status-pill ${item.status}`}>{statusLabels[item.status]}</span></td><td>{item.holder}</td><td>⌖ {item.location}</td><td>{item.updated}</td><td>{deviations ? <span className="issue-count">● {deviations} Abweichung{deviations === 1 ? "" : "en"}</span> : <span className="inventory-ok">✓ Soll = Ist</span>}</td><td><button className="row-action" aria-label={`${item.id} öffnen`}>Details ›</button></td></tr>; })}</tbody></table></div>;
 }
 
 function BookingsView({ cases, bookings, onCreated }: { cases: CaseItem[]; bookings: Booking[]; onCreated: (text: string) => Promise<void> }) {
@@ -227,33 +239,58 @@ function BookingsView({ cases, bookings, onCreated }: { cases: CaseItem[]; booki
 
 function HandoversView({ cases }: { cases: CaseItem[] }) { const events = cases.flatMap((item) => item.history.map((event) => ({ ...event, caseNumber: item.id }))).sort((a, b) => b.date.localeCompare(a.date)); return <section className="panel content-page"><h2>Übergabeverlauf</h2><p>Kofferstatus und Vorgangsstatus bleiben getrennt. Jede Abschluss- und Übernahmezählung wird als eigenes Ereignis geführt.</p>{events.map((event, index) => <div className="timeline-row" key={`${event.caseNumber}-${event.date}-${index}`}><span>⇄</span><div><b>{event.caseNumber} · {event.title}</b><small>{event.detail || "Keine Zusatzinformation"}</small></div><time>{event.date}</time></div>)}{!events.length && <InlineEmpty text="Noch keine Übergabeereignisse vorhanden."/>}</section>; }
 
-function LocationsView({ cases, onSelect }: { cases: CaseItem[]; onSelect: (item: CaseItem) => void }) { const groups = cases.reduce<Map<string, CaseItem[]>>((result, item) => result.set(item.location, [...(result.get(item.location) ?? []), item]), new Map()); return <section className="location-grid">{[...groups].map(([location, items]) => <div className="panel location-card" key={location}><div><span>⌖</span><div><h2>{location}</h2><p>{items.length} Koffer</p></div></div>{items.map((item) => <button key={item.databaseId} onClick={() => onSelect(item)}><span><b>{item.id}</b><small>{item.holder === "–" ? item.name : `Aktuell bei ${item.holder}`}</small></span><span className={`status-pill ${item.status}`}>{statusLabels[item.status]}</span></button>)}</div>)}</section>; }
+function LocationsView({ cases, onSelect }: { cases: CaseItem[]; onSelect: (item: CaseItem) => void }) { const groups = cases.reduce<Map<string, CaseItem[]>>((result, item) => result.set(item.location, [...(result.get(item.location) ?? []), item]), new Map()); return <div className="locations-layout"><section className="panel location-map-panel"><div className="content-head"><div><h2>Adressen auf der Karte</h2><p>OpenStreetMap mit den zuletzt bestätigten Kofferstandorten.</p></div></div><CaseMap cases={cases}/></section><section className="location-grid">{[...groups].map(([location, items]) => <div className="panel location-card" key={location}><div><span>⌖</span><div><h2>{location}</h2><p>{items.length} Koffer</p></div></div>{items.map((item) => <button key={item.databaseId} onClick={() => onSelect(item)}><span><b>{item.id}</b><small>{item.address || (item.holder === "–" ? item.name : `Aktuell bei ${item.holder}`)}</small></span><span className={`status-pill ${item.status}`}>{statusLabels[item.status]}</span></button>)}</div>)}</section></div>; }
 
-function InventoryOverview({ cases }: { cases: CaseItem[] }) { const [query, setQuery] = useState(""); const rows = cases.flatMap((item) => item.inventory.map((inventory) => ({ caseNumber: item.id, caseName: item.name, ...inventory }))).filter((item) => `${item.name} ${item.caseNumber}`.toLowerCase().includes(query.toLowerCase())); return <section className="panel content-page"><div className="content-head"><div><h2>Soll- und Ist-Bestand</h2><p>Gegenstände über alle Koffer finden und Abweichungen erkennen.</p></div><label className="search-field">⌕<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="z. B. Router"/></label></div><div className="table-scroll"><table><thead><tr><th>Gegenstand</th><th>Koffer</th><th>Soll</th><th>Ist</th><th>Differenz</th><th>Notiz</th></tr></thead><tbody>{rows.map((item, index) => <tr key={`${item.caseNumber}-${item.name}-${index}`}><td><b>{item.name}</b></td><td>{item.caseNumber} · {item.caseName}</td><td>{item.expected}</td><td>{item.actual}</td><td className={item.actual !== item.expected ? "danger" : ""}>{item.actual - item.expected}</td><td>{item.note ?? "–"}</td></tr>)}</tbody></table></div></section>; }
+function InventoryOverview({ cases }: { cases: CaseItem[] }) {
+  const [query, setQuery] = useState("");
+  const rows = useMemo(() => {
+    const totals = new Map<string, { name: string; expected: number; actual: number; cases: Set<string> }>();
+    cases.forEach((item) => item.inventory.forEach((inventory) => {
+      const key = inventory.name.trim().toLocaleLowerCase("de-AT");
+      const current = totals.get(key) ?? { name: inventory.name.trim(), expected: 0, actual: 0, cases: new Set<string>() };
+      current.expected += inventory.expected;
+      current.actual += inventory.actual;
+      current.cases.add(item.id);
+      totals.set(key, current);
+    }));
+    return [...totals.values()].filter((item) => item.name.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => a.name.localeCompare(b.name, "de"));
+  }, [cases, query]);
+  return <section className="panel content-page"><div className="content-head"><div><h2>Gesamtbestand aller Koffer</h2><p>Gleich benannte Gegenstände werden über alle Koffer zusammengerechnet.</p></div><label className="search-field">⌕<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="z. B. CAT-Kabel"/></label></div><div className="table-scroll"><table><thead><tr><th>Gegenstand</th><th>Enthalten in</th><th>Soll gesamt</th><th>Ist gesamt</th><th>Status</th></tr></thead><tbody>{rows.map((item) => <tr key={item.name}><td><b>{item.name}</b></td><td>{[...item.cases].join(", ")}</td><td>{item.expected}</td><td>{item.actual}</td><td>{item.actual === item.expected ? <span className="inventory-ok">✓ Soll = Ist</span> : <span className="issue-count">● Differenz {item.actual - item.expected}</span>}</td></tr>)}</tbody></table></div>{!rows.length && <InlineEmpty text="Keine passenden Gegenstände gefunden."/>}</section>;
+}
 
 function Notices({ cases, onSelect }: { cases: CaseItem[]; onSelect: (item: CaseItem) => void }) { return <section className="panel content-page"><h2>Offene Hinweise</h2><p>Hinweise bleiben sichtbar, bis sie im zugrunde liegenden Kofferbestand behoben wurden.</p>{cases.map((item) => <button className="notice-card actionable" key={item.databaseId} onClick={() => onSelect(item)}><span><b>{item.id} · {item.name}</b><small>{item.inventory.filter((entry) => entry.actual !== entry.expected).map((entry) => `${entry.name}: ${entry.actual}/${entry.expected}`).join(" · ") || statusHelp[item.status]}</small></span><span>Prüfen ›</span></button>)}{!cases.length && <InlineEmpty text="Aktuell sind keine Abweichungen offen."/>}</section>; }
 
-function SettingsView() { return <section className="settings-grid"><div className="panel content-page"><h2>Koffertypen & Standardinhalte</h2><p>Beim Anlegen wird derzeit ein editierbarer KÖNA-Standardinhalt vorgeschlagen. Eigene Stammdatentypen können auf dieser Grundlage ergänzt werden.</p></div><div className="panel content-page"><h2>Nummerierung & QR-Ziel</h2><p>ID-Schema: <b>KFR-001</b><br/>QR-Ziel: dauerhafte öffentliche ID, nicht die veränderbare Bezeichnung.</p></div><div className="panel content-page"><h2>Berechtigungen</h2><p>Nur angemeldete Konten mit <b>app_metadata.role = admin</b> dürfen Verwaltungsdaten lesen oder ändern.</p></div></section>; }
 
-function CaseDrawer({ selected, bookings, onClose, onArchive }: { selected: CaseItem; bookings: Booking[]; onClose: () => void; onArchive: () => void }) {
+function CaseDrawer({ selected, bookings, onClose, onEdit, onDelete }: { selected: CaseItem; bookings: Booking[]; onClose: () => void; onEdit: () => void; onDelete: () => void }) {
   const qrRef = useRef<SVGSVGElement | null>(null);
   const qrUrl = `${window.location.origin}/koffer/${selected.publicId}`;
   function printQr() { const popup = window.open("", "_blank", "width=500,height=650"); if (!popup || !qrRef.current) return; popup.document.write(`<title>${selected.id}</title><style>body{text-align:center;font-family:Arial;padding:50px}svg{width:280px;height:280px}h1{margin:20px 0 5px}</style>${qrRef.current.outerHTML}<h1>${selected.id}</h1><p>${selected.name}</p><script>onload=()=>print()</script>`); popup.document.close(); }
-  return <div className="drawer-overlay" onClick={onClose}><aside className="case-drawer wide" onClick={(event) => event.stopPropagation()}><button className="drawer-close" onClick={onClose}>×</button><p>{selected.id}</p><h2>{selected.name}</h2><span className={`status-pill ${selected.status}`}>{statusLabels[selected.status]}</span><p className="status-explanation">{statusHelp[selected.status]}</p><div className="drawer-columns"><div><div className="drawer-info"><small>Aktuell bei</small><b>{selected.holder}</b><small>Adresse / letzter Standort</small><b>{selected.address}</b><small>Zuletzt aktualisiert</small><b>{selected.updated}</b><small>Nächste Buchung</small><b>{bookings[0] ? `${bookings[0].startsOn} bis ${bookings[0].endsOn}` : "Keine geplant"}</b></div><h3>Kofferinhalt</h3>{selected.inventory.map((item) => <div className="drawer-item" key={item.id ?? item.name}><span>{item.name}<small>{item.note}</small></span><b className={item.actual !== item.expected ? "danger" : ""}>{item.actual} / {item.expected}</b></div>)}</div><div><div className="qr-card"><QRCodeSVG ref={qrRef} value={qrUrl} size={190} fgColor="#073f3f"/><b>QR-Code für {selected.id}</b><small>{qrUrl}</small><button onClick={printQr}>⎙ QR-Code drucken</button></div><h3>Historie</h3>{selected.history.map((event, index) => <div className="history-item" key={`${event.date}-${index}`}><b>{event.title}</b><small>{event.date} · {event.detail}</small></div>)}{!selected.history.length && <InlineEmpty text="Noch keine Ereignisse."/>}</div></div><div className="danger-zone"><div><b>Koffer archivieren</b><small>Bleibt für Historie und Berichte erhalten.</small></div><button onClick={onArchive}>Archivieren</button></div></aside></div>;
+  return <div className="drawer-overlay" onClick={onClose}><aside className="case-drawer wide" onClick={(event) => event.stopPropagation()}><button className="drawer-close" onClick={onClose}>×</button><p>{selected.id}</p><h2>{selected.name}</h2><div className="drawer-management"><span className={`status-pill ${selected.status}`}>{statusLabels[selected.status]}</span><button className="secondary-modal" onClick={onEdit}>✎ Koffer bearbeiten</button></div><p className="status-explanation">{statusHelp[selected.status]}</p><div className="drawer-columns"><div><div className="drawer-info"><small>Aktuell bei</small><b>{selected.holder}</b><small>Adresse / letzter Standort</small><b>{selected.address}</b><small>Zuletzt aktualisiert</small><b>{selected.updated}</b><small>Nächste Buchung</small><b>{bookings[0] ? `${bookings[0].startsOn} bis ${bookings[0].endsOn}` : "Keine geplant"}</b></div><h3>Kofferinhalt</h3>{selected.inventory.map((item) => <div className="drawer-item" key={item.id ?? item.name}><span>{item.name}</span><b className={item.actual !== item.expected ? "danger" : "inventory-ok"}>{item.actual === item.expected ? "✓ " : ""}{item.actual} / {item.expected}</b></div>)}</div><div><div className="qr-card"><QRCodeSVG ref={qrRef} value={qrUrl} size={190} fgColor="#073f3f"/><b>QR-Code für {selected.id}</b><small>{qrUrl}</small><button onClick={printQr}>⎙ QR-Code drucken</button></div><h3>Historie</h3>{selected.history.map((event, index) => <div className="history-item" key={`${event.date}-${index}`}><b>{event.title}</b><small>{event.date} · {event.detail}</small></div>)}{!selected.history.length && <InlineEmpty text="Noch keine Ereignisse."/>}</div></div><div className="danger-zone"><div><b>Koffer dauerhaft löschen</b><small>Entfernt auch Buchungen, Übergaben und Historie. Der QR-Code dieses Cases ist danach ungültig.</small></div><button onClick={onDelete}>Löschen</button></div></aside></div>;
 }
 
-function CreateCaseModal({ cases, onClose, onCreate }: { cases: CaseItem[]; onClose: () => void; onCreate: (input: { id: string; name: string; description: string; location: string; inventory: InventoryItem[] }) => Promise<void> }) {
+function CreateCaseModal({ cases, onClose, onCreate }: { cases: CaseItem[]; onClose: () => void; onCreate: (input: { id: string; name: string; description: string; inventory: InventoryItem[] }) => Promise<void> }) {
   const nextNumber = Math.max(0, ...cases.map((item) => Number(item.id.replace(/\D/g, "")) || 0)) + 1;
   const [id, setId] = useState(`KFR-${String(nextNumber).padStart(3, "0")}`);
-  const [name, setName] = useState(""); const [description, setDescription] = useState(""); const [location, setLocation] = useState("Lager Freistadt");
+  const [name, setName] = useState(""); const [description, setDescription] = useState("");
   const [inventory, setInventory] = useState(starterInventory.map((item) => ({ ...item })));
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  function updateItem(index: number, field: "name" | "expected" | "note", value: string) { setInventory((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: field === "expected" ? Math.max(0, Number(value)) : value, actual: field === "expected" ? Math.max(0, Number(value)) : item.actual } : item)); }
-  async function submit(event: React.FormEvent) { event.preventDefault(); setError(""); if (!/^K(FR)?-\d{3}$/.test(id)) { setError("Die Koffer-ID muss dem Format KFR-001 entsprechen."); return; } if (!inventory.length || inventory.some((item) => !item.name.trim())) { setError("Mindestens eine vollständig bezeichnete Inhaltsposition ist erforderlich."); return; } setBusy(true); try { await onCreate({ id: id.trim().toUpperCase(), name: name.trim(), description: description.trim(), location: location.trim(), inventory }); } catch (problem) { setError((problem as Error).message); } finally { setBusy(false); } }
-  return <div className="modal-backdrop" onClick={onClose}><form className="create-modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}><header><div><p>Neuer Koffer</p><h2>Koffer mit Inhalt anlegen</h2></div><button type="button" onClick={onClose}>×</button></header><div className="create-grid"><label>Koffer-ID *<input required value={id} onChange={(event) => setId(event.target.value.toUpperCase())}/><small>Eindeutig, Format KFR-001</small></label><label>Bezeichnung *<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="z. B. Technikkoffer Nord"/></label><label className="full">Beschreibung<textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Optionaler Einsatzzweck oder Besonderheiten"/></label><label className="full">Ausgangsstandort *<input required value={location} onChange={(event) => setLocation(event.target.value)}/></label></div><div className="inventory-editor"><div className="inventory-editor-head"><div><h3>Inhalt</h3><small>Soll-Menge und optionale Bemerkung</small></div><button type="button" onClick={() => setInventory((items) => [...items, { name: "", expected: 1, actual: 1 }])}>＋ Gegenstand</button></div>{inventory.map((item, index) => <div className="inventory-edit-row extended" key={index}><input aria-label="Gegenstand" value={item.name} onChange={(event) => updateItem(index, "name", event.target.value)} placeholder="Gegenstand"/><input aria-label="Soll-Menge" type="number" min="0" value={item.expected} onChange={(event) => updateItem(index, "expected", event.target.value)}/><input aria-label="Bemerkung" value={item.note ?? ""} onChange={(event) => updateItem(index, "note", event.target.value)} placeholder="Bemerkung / Seriennummer optional"/><button type="button" aria-label="Position entfernen" onClick={() => setInventory((items) => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>)}</div>{error && <div className="form-error">! {error}</div>}<footer><button type="button" className="secondary-modal" onClick={onClose}>Abbrechen</button><button className="primary-modal" disabled={busy}>{busy ? "Wird in Supabase gespeichert …" : "Koffer speichern"}</button></footer></form></div>;
+  function updateItem(index: number, field: "name" | "expected", value: string) { setInventory((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: field === "expected" ? Math.max(0, Number(value)) : value, actual: field === "expected" ? Math.max(0, Number(value)) : item.actual } : item)); }
+  async function submit(event: React.FormEvent) { event.preventDefault(); setError(""); if (!/^K(FR)?-\d{3}$/.test(id)) { setError("Die Koffer-ID muss dem Format KFR-001 entsprechen."); return; } if (!inventory.length || inventory.some((item) => !item.name.trim())) { setError("Mindestens eine vollständig bezeichnete Inhaltsposition ist erforderlich."); return; } setBusy(true); try { await onCreate({ id: id.trim().toUpperCase(), name: name.trim(), description: description.trim(), inventory }); } catch (problem) { setError((problem as Error).message); } finally { setBusy(false); } }
+  return <div className="modal-backdrop" onClick={onClose}><form className="create-modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}><header><div><p>Neuer Koffer</p><h2>Koffer mit individuellem Inhalt anlegen</h2></div><button type="button" onClick={onClose}>×</button></header><div className="create-grid"><label>Koffer-ID *<input required value={id} onChange={(event) => setId(event.target.value.toUpperCase())}/><small>Der feste QR-Code bleibt mit dieser Case-ID verbunden.</small></label><label>Bezeichnung *<input required value={name} onChange={(event) => setName(event.target.value)} placeholder="z. B. Technikkoffer Nord"/></label><label className="full">Beschreibung<textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Optionaler Einsatzzweck oder Besonderheiten"/></label></div><div className="fixed-location-note">⌖ Ausgangsstandort: <b>Summerau</b> (wird automatisch gespeichert)</div><div className="inventory-editor"><div className="inventory-editor-head"><div><h3>Individuelle Befüllung</h3><small>Gegenstand und Soll-Menge; die Ist-Menge startet gleich dem Soll.</small></div><button type="button" onClick={() => setInventory((items) => [...items, { name: "", expected: 1, actual: 1 }])}>＋ Gegenstand</button></div>{inventory.map((item, index) => <div className="inventory-edit-row compact" key={index}><input aria-label="Gegenstand" value={item.name} onChange={(event) => updateItem(index, "name", event.target.value)} placeholder="Gegenstand"/><input aria-label="Soll-Menge" type="number" min="0" value={item.expected} onChange={(event) => updateItem(index, "expected", event.target.value)}/><button type="button" aria-label="Position entfernen" onClick={() => setInventory((items) => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>)}</div>{error && <div className="form-error">! {error}</div>}<footer><button type="button" className="secondary-modal" onClick={onClose}>Abbrechen</button><button className="primary-modal" disabled={busy}>{busy ? "Wird in Supabase gespeichert …" : "Koffer speichern"}</button></footer></form></div>;
+}
+
+function EditCaseModal({ item, onClose, onUpdate, onDelete }: { item: CaseItem; onClose: () => void; onUpdate: (input: { databaseId: string; name: string; description: string; status: CaseItem["status"]; inventory: InventoryItem[] }) => Promise<void>; onDelete: () => void }) {
+  const [name, setName] = useState(item.name);
+  const [description, setDescription] = useState(item.description ?? "");
+  const [status, setStatus] = useState<CaseItem["status"]>(item.status);
+  const [inventory, setInventory] = useState(item.inventory.map((entry) => ({ ...entry })));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  function updateItem(index: number, field: "name" | "expected", value: string) { setInventory((items) => items.map((entry, itemIndex) => itemIndex === index ? { ...entry, [field]: field === "expected" ? Math.max(0, Number(value)) : value, actual: field === "expected" ? Math.max(0, Number(value)) : entry.actual } : entry)); }
+  async function submit(event: React.FormEvent) { event.preventDefault(); setError(""); if (!inventory.length || inventory.some((entry) => !entry.name.trim())) { setError("Mindestens eine vollständig bezeichnete Inhaltsposition ist erforderlich."); return; } setBusy(true); try { await onUpdate({ databaseId: item.databaseId, name: name.trim(), description: description.trim(), status, inventory }); } catch (problem) { setError((problem as Error).message); } finally { setBusy(false); } }
+  return <div className="modal-backdrop" onClick={onClose}><form className="create-modal" onSubmit={submit} onClick={(event) => event.stopPropagation()}><header><div><p>{item.id}</p><h2>Koffer und Befüllung bearbeiten</h2></div><button type="button" onClick={onClose}>×</button></header><div className="create-grid"><label>Koffer-ID<input disabled value={item.id}/><small>Bleibt wegen des festen QR-Codes unverändert.</small></label><label>Bezeichnung *<input required value={name} onChange={(event) => setName(event.target.value)}/></label><label className="full">Beschreibung<textarea value={description} onChange={(event) => setDescription(event.target.value)}/></label><label className="full">Kofferstatus<select value={status} onChange={(event) => setStatus(event.target.value as CaseItem["status"])}>{Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></div><div className="inventory-editor"><div className="inventory-editor-head"><div><h3>Individuelle Befüllung</h3><small>Änderungen setzen den zuletzt bestätigten Ist-Bestand auf den neuen Soll-Bestand.</small></div><button type="button" onClick={() => setInventory((items) => [...items, { name: "", expected: 1, actual: 1 }])}>＋ Gegenstand</button></div>{inventory.map((entry, index) => <div className="inventory-edit-row compact" key={entry.id ?? index}><input aria-label="Gegenstand" value={entry.name} onChange={(event) => updateItem(index, "name", event.target.value)}/><input aria-label="Soll-Menge" type="number" min="0" value={entry.expected} onChange={(event) => updateItem(index, "expected", event.target.value)}/><button type="button" aria-label="Position entfernen" onClick={() => setInventory((items) => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></div>)}</div>{error && <div className="form-error">! {error}</div>}<footer className="edit-modal-footer"><button type="button" className="delete-modal" onClick={onDelete}>Koffer löschen</button><span/><button type="button" className="secondary-modal" onClick={onClose}>Abbrechen</button><button className="primary-modal" disabled={busy}>{busy ? "Speichert …" : "Änderungen speichern"}</button></footer></form></div>;
 }
 
 function Metric({ icon, label, value, text, tone }: { icon: string; label: string; value: number; text: string; tone: string }) { return <div className="metric"><span className={tone}>{icon}</span><div><small>{label}</small><b>{value}</b><p>{text}</p></div></div>; }
 function PanelTitle({ title, action, onAction }: { title: string; action?: string; onAction?: () => void }) { return <div className="panel-title"><h2>{title}</h2>{action && <button onClick={onAction}>{action}</button>}</div>; }
 function InlineEmpty({ text }: { text: string }) { return <div className="inline-empty">✓ {text}</div>; }
-function EmptyState({ title, text }: { title: string; text: string }) { return <section className="panel empty-page"><div>▣</div><h2>{title}</h2><p>{text}</p></section>; }
