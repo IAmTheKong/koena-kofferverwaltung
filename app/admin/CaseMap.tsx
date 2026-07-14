@@ -25,26 +25,46 @@ export default function CaseMap({ cases }: { cases: CaseItem[] }) {
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap-Mitwirkende</a>',
       }).addTo(instance);
 
-      const points: [number, number][] = [];
+      const grouped = new Map<string, { point: [number, number]; items: CaseItem[] }>();
       for (const item of cases) {
         if (item.latitude === undefined || item.longitude === undefined) continue;
         const point: [number, number] = [item.latitude, item.longitude];
+        const key = `${item.latitude.toFixed(5)},${item.longitude.toFixed(5)}`;
+        const group = grouped.get(key) ?? { point, items: [] };
+        group.items.push(item);
+        grouped.set(key, group);
+      }
+
+      const points: [number, number][] = [];
+      for (const { point, items } of grouped.values()) {
         points.push(point);
+        const hasDeviation = items.some((item) => item.status === "deviation" || item.status === "out_of_service");
+        const isWaiting = items.some((item) => item.status === "awaiting_takeover");
+        const tone = hasDeviation ? "danger" : isWaiting ? "warning" : "normal";
+        const count = items.length > 1 ? `<b class="case-map-count">${items.length}</b>` : "";
+        const icon = L.divIcon({
+          className: "case-map-icon",
+          html: `<span class="case-map-pin ${tone}"><span>▣</span></span>${count}`,
+          iconSize: [46, 54],
+          iconAnchor: [23, 50],
+          popupAnchor: [0, -48],
+        });
         const popup = document.createElement("div");
-        const title = document.createElement("strong");
-        title.textContent = `${item.id} · ${item.name}`;
-        const status = document.createElement("div");
-        status.textContent = statusLabels[item.status];
-        const address = document.createElement("div");
-        address.textContent = item.address;
-        popup.append(title, status, address);
-        L.circleMarker(point, {
-          radius: 9,
-          color: item.status === "deviation" ? "#b42318" : item.status === "awaiting_takeover" ? "#b76609" : "#007c7c",
-          fillColor: "#ffffff",
-          fillOpacity: 1,
-          weight: 4,
-        }).addTo(instance).bindPopup(popup);
+        popup.className = "case-map-popup";
+        const heading = document.createElement("strong");
+        heading.textContent = items.length === 1 ? "Koffer an diesem Standort" : `${items.length} Koffer an diesem Standort`;
+        popup.append(heading);
+        for (const item of items) {
+          const row = document.createElement("div");
+          const title = document.createElement("b");
+          title.textContent = `${item.id} · ${item.name}`;
+          const detail = document.createElement("small");
+          detail.textContent = `${statusLabels[item.status]} · ${item.address}`;
+          row.append(title, detail);
+          popup.append(row);
+        }
+        const markerTitle = items.map((item) => item.id).join(", ");
+        L.marker(point, { icon, title: markerTitle, alt: `Kofferstandort: ${markerTitle}`, keyboard: true }).addTo(instance).bindPopup(popup);
       }
 
       if (points.length > 1) instance.fitBounds(points, { padding: [35, 35], maxZoom: 14 });
